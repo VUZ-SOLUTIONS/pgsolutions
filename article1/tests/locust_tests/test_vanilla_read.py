@@ -1,29 +1,42 @@
 import logging
 
-import psycopg
+#import psycopg
+import psycopg2
+import psycopg2
+from psycopg2 import pool
+
+
 from locust import User, TaskSet, task, between, events
 import time
 
-log = logging.getLogger()
-log.setLevel(logging.INFO)
 
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+formatter = logging.Formatter('[%(asctime)s] - [%(filename)s:%(lineno)s] - [%(threadName)s] - [%(name)s] - [%(levelname)s] - %(message)s')
 
 fh = logging.FileHandler('locustfile.log')
 fh.setLevel(logging.INFO)
 fh.setFormatter(formatter)
-log.addHandler(fh)
+logger.addHandler(fh)
 
+pool = psycopg2.pool.SimpleConnectionPool(1, 20, user="postgres",
+                                          password="atmain125",
+                                          host="127.0.0.1",
+                                          port="54322",
+                                          database="Adventureworks")
 
-def create_conn(conn_string):
-    #log.info("Connect and Query PostgreSQL")
-    conn = psycopg.connect(conn_string)
+def create_conn():
+    conn = pool.getconn()
     return conn
 
 
-def execute_query(conn_string, query):
-    db_conn = create_conn(conn_string)
-    db_query = db_conn.cursor().execute(query)
+def execute_query(query):
+    db_conn = create_conn()
+    try:
+        db_query = db_conn.cursor().execute(query)
+    finally:
+        pool.putconn(db_conn)
     return db_query
 
 
@@ -35,7 +48,7 @@ class PostgresClient:
             try:
                 res = execute_query(*args, **kwargs)
                 response_time = int((time.time() - start_time) * 1000)
-                #log.info("{} Started task".format(response_time))
+                logger.debug("Query result: {}".format(res))
 
                 events.request.fire(
                     request_type="postgres",
@@ -52,7 +65,7 @@ class PostgresClient:
                     response_length=0,
                     exception=e,
                 )
-                log.error("error {}".format(e))
+                logger.error("error {}".format(e))
 
         return request_handler
 
@@ -60,13 +73,12 @@ class PostgresClient:
 class CustomTaskSet(TaskSet):
     def __init__(self, parent):
         super().__init__(parent)
-        self.conn_string = "postgresql://postgres:atmain125@localhost:54322/Adventureworks"
+        logger.info("Started task")
 
-
-    log.info("Started task")
-
-    @task(5)
+    @task
     def run_query(self):
+        # just get the latest employee positiion
+        # enddate must be null
         sql = """
         select distinct on (a.nationalidnumber) a.nationalidnumber, dep_name as last_dep_name, a.firstname, a.lastname, a.modifieddate, a.startdate, a.enddate
          from     
@@ -77,10 +89,7 @@ class CustomTaskSet(TaskSet):
         ) a 
         order by a.nationalidnumber, a.startdate desc
 """
-        self.client.execute_query(
-            self.conn_string,
-            sql,
-        )
+        self.client.execute_query(sql)
 
 
 # This class will be executed when you run locust
